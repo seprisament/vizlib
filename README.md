@@ -2,9 +2,10 @@
 
 > A tiny, locally-installable Python library for visualizing the relationship between wealth and happiness.
 
-Two plain functions, one matplotlib dependency, no pandas/numpy. Plots a
-scatter of wealth vs. happiness with a hand-fitted trend line, and a line
-chart showing the classic diminishing-returns curve.
+Three plain functions, one matplotlib dependency, no pandas/numpy. Plots a
+scatter of wealth vs. happiness with a hand-fitted trend line, a line chart
+showing the classic diminishing-returns curve, and a histogram of happiness
+split by wealth group.
 
 ## Install
 
@@ -43,6 +44,10 @@ fig1 = hw.scatter_trend(data["wealth"], data["happiness"],
 # 3. The diminishing-returns curve (runs with no data at all).
 fig2 = hw.diminishing_returns(save_path="diminishing.png")
 
+# 4. Histogram of happiness, split into low/middle/high wealth groups.
+fig3 = hw.happiness_histogram(data["wealth"], data["happiness"],
+                              save_path="histogram.png")
+
 # Show them interactively instead of / in addition to saving:
 import matplotlib.pyplot as plt
 plt.show()
@@ -55,6 +60,7 @@ plt.show()
 | `load_csv(path="data/happiness_wealth.csv")` | Read the CSV into `{"wealth": [...], "happiness": [...]}`. |
 | `scatter_trend(wealth, happiness, title=..., save_path=None)` | Scatter plot with a plain least-squares trend line. |
 | `diminishing_returns(wealth=None, model=None, title=..., save_path=None)` | Line chart of happiness rising then flattening. |
+| `happiness_histogram(wealth, happiness, edges=None, bins=10, ...)` | Overlaid happiness histogram, split by wealth group (tertiles by default). |
 
 Every plotting function returns the matplotlib `Figure`, and writes a PNG
 when given `save_path`.
@@ -64,9 +70,9 @@ when given `save_path`.
 ```
 .
 ├── happiness_wealth/
-│   ├── __init__.py      # exposes load_csv, scatter_trend, diminishing_returns
+│   ├── __init__.py      # exposes load_csv + the three plotting functions
 │   ├── loader.py        # load_csv
-│   └── plots.py         # the two visualization functions
+│   └── plots.py         # the three visualization functions
 ├── data/
 │   └── happiness_wealth.csv   # sample generated dataset
 ├── generate_data.py     # standard-library data generator

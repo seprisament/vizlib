@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "happiness_wealth"
-version = "0.1.0"
+version = "0.2.0"
 description = "Tiny matplotlib visualizations of the relationship between wealth and happiness."
 readme = "README.md"
 requires-python = ">=3.8"

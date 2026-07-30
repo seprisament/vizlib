@@ -1,4 +1,4 @@
-"""Two small visualizations of the wealth/happiness relationship.
+"""Small visualizations of the wealth/happiness relationship.
 
 Each is a single standalone function (no classes) that takes plain Python
 lists, draws with matplotlib, optionally saves to disk, and returns the
@@ -56,6 +56,60 @@ def scatter_trend(wealth, happiness, title="Wealth vs. Happiness",
 
     ax.set_xlabel("Wealth (annual income)")
     ax.set_ylabel("Happiness score")
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, alpha=0.2)
+    fig.tight_layout()
+
+    if save_path:
+        fig.savefig(save_path, dpi=150)
+    return fig
+
+
+def happiness_histogram(wealth, happiness, edges=None, bins=10,
+                        labels=("low wealth", "middle wealth", "high wealth"),
+                        title="Happiness Distribution by Wealth Group",
+                        save_path=None):
+    """Overlaid histogram of happiness, split into wealth groups.
+
+    People are bucketed by wealth (low / middle / high by default) and a
+    translucent happiness histogram is drawn for each group, so you can see
+    how the distribution shifts as wealth rises.
+
+    Args:
+        wealth: List of wealth/income values.
+        happiness: List of happiness scores, same length as ``wealth``.
+        edges: Wealth cut points between groups. Defaults to the data's
+            tertiles, giving three roughly equal-sized groups.
+        bins: Number of histogram bins for the happiness axis.
+        labels: Names for the groups (one more than ``edges``).
+        title: Figure title.
+        save_path: If given, the figure is written to this path.
+
+    Returns:
+        The matplotlib ``Figure``.
+    """
+    if edges is None:
+        # Tertiles of wealth -> three roughly equal groups (plain Python).
+        s = sorted(wealth)
+        edges = [s[len(s) // 3], s[2 * len(s) // 3]]
+
+    # Assign each person to a group index from their wealth.
+    groups = [[] for _ in labels]
+    for w, h in zip(wealth, happiness):
+        idx = sum(1 for e in edges if w >= e)  # 0..len(edges)
+        groups[idx].append(h)
+
+    colors = ["#d64545", "#e0a13c", "#2e8b57"]
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for scores, label, color in zip(groups, labels, colors):
+        if scores:
+            ax.hist(scores, bins=bins, range=(0, 10), alpha=0.55,
+                    color=color, edgecolor="white",
+                    label=f"{label} (n={len(scores)})")
+
+    ax.set_xlabel("Happiness score")
+    ax.set_ylabel("Number of people")
     ax.set_title(title)
     ax.legend()
     ax.grid(True, alpha=0.2)

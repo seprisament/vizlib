@@ -1,165 +1,252 @@
-"""Small visualizations of the wealth/happiness relationship.
+"""
+Wealth -> Happiness: a shared curve that KINKS into sharp diminishing returns
+=============================================================================
 
-Each is a single standalone function (no classes) that takes plain Python
-lists, draws with matplotlib, optionally saves to disk, and returns the
-Figure so callers can further tweak or display it.
+Charts:
+  Chart 1 (histogram): marginal happiness gained per wealth bracket (5 wide,
+      equal-width brackets, both eras combined). Soft-blue bars; the bracket where
+      returns collapse is highlighted. Bars shrink left to right.
+  Chart 2 (line chart): happiness vs wealth for each era, with one vertical line
+      marking the kink where the 2010s starts flattening faster.
+
+Run:  plots.py
+Out:  wealth_happiness.csv, chart1_marginal_gain_hist.png, chart2_era_curves.pdf
 """
 
-import math
-
+import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 
+RNG = np.random.default_rng(42)
 
-def _fit_line(xs, ys):
-    """Ordinary least-squares fit in plain Python (no numpy).
+# ---- Model constants (happiness on a 0-10 life-satisfaction scale) ----------
+OBS_PER_YEAR = 200
+ERAS = {"1980s": range(1980, 1990), "2010s": range(2010, 2020)}
 
-    Returns ``(slope, intercept)`` for the best-fit line ``y = slope*x + b``.
-    """
-    n = len(xs)
-    mean_x = sum(xs) / n
-    mean_y = sum(ys) / n
-    # slope = covariance(x, y) / variance(x)
-    num = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
-    den = sum((x - mean_x) ** 2 for x in xs)
-    slope = num / den if den else 0.0
-    intercept = mean_y - slope * mean_x
-    return slope, intercept
+FLOOR = 2.0              # happiness at (near) zero wealth
+KINK = 115.0            # wealth ($1,000s) where the eras diverge
+NOISE_SD = 0.35
+
+# Shared regime BELOW the kink (identical for both eras).
+K_LO, CAP_LO = 80.0, 7.8
+H_KINK = FLOOR + (CAP_LO - FLOOR) * (1.0 - np.exp(-KINK / K_LO))
+
+# Era-specific regime ABOVE the kink: (extra ceiling above H_KINK, saturation k).
+ABOVE = {
+    "1980s": (1.6, 90.0),    # keeps climbing gradually
+    "2010s": (0.28, 10.0),   # flattens hard almost immediately
+}
+
+# Soft, minimal palette.
+SOFT_BLUE = "#8FB8DE"
+ACCENT = "#E8794A"       # (kept for reference; histogram now uses one color)
+C_1980 = "#8189C6"       # soft indigo
+C_2010 = "#E7A76A"       # soft amber
+SOFT_RED = "#D98C82"     # soft red for the divergence line
 
 
-def scatter_trend(wealth, happiness, title="Wealth vs. Happiness",
-                  save_path=None):
-    """Scatter plot of wealth vs. happiness with a fitted trend line.
+# ----------------------------------------------------------------------------
+# 1. DATASET
+# ----------------------------------------------------------------------------
+def happiness_curve(wealth: np.ndarray, era: np.ndarray) -> np.ndarray:
+    """Piecewise curve: shared below KINK, era-specific above KINK (continuous)."""
+    below = FLOOR + (CAP_LO - FLOOR) * (1.0 - np.exp(-wealth / K_LO))
 
-    The trend line's slope and intercept are computed by hand with a plain
-    least-squares fit — no numpy involved.
+    gap = np.where(era == "2010s", ABOVE["2010s"][0], ABOVE["1980s"][0])
+    k_hi = np.where(era == "2010s", ABOVE["2010s"][1], ABOVE["1980s"][1])
+    step = np.clip(wealth - KINK, 0, None)
+    above = H_KINK + gap * (1.0 - np.exp(-step / k_hi))
 
-    Args:
-        wealth: List of wealth/income values (x-axis).
-        happiness: List of happiness scores (y-axis), same length as ``wealth``.
-        title: Figure title.
-        save_path: If given, the figure is written to this path.
+    return np.where(wealth <= KINK, below, above)
 
-    Returns:
-        The matplotlib ``Figure``.
-    """
-    slope, intercept = _fit_line(wealth, happiness)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.scatter(wealth, happiness, s=25, alpha=0.6, color="#3b7dd8",
-               edgecolor="white", linewidth=0.5, label="people")
+def generate_dataset() -> pd.DataFrame:
+    years = np.concatenate([np.repeat(list(r), OBS_PER_YEAR) for r in ERAS.values()])
+    era = np.where(years >= 2010, "2010s", "1980s")
+    n = years.size
 
-    # Draw the fitted line across the observed wealth range.
-    x0, x1 = min(wealth), max(wealth)
-    ax.plot([x0, x1], [slope * x0 + intercept, slope * x1 + intercept],
-            color="#d64545", linewidth=2,
-            label=f"trend (slope={slope:.2e})")
+    # Wealth ($1,000s): broad lognormal so every bracket is populated, low -> high.
+    wealth = np.clip(RNG.lognormal(np.log(60), 0.75, size=n), 3, 600)
 
-    ax.set_xlabel("Wealth (annual income)")
-    ax.set_ylabel("Happiness score")
-    ax.set_title(title)
-    ax.legend()
-    ax.grid(True, alpha=0.2)
+    happiness = happiness_curve(wealth, era) + RNG.normal(0, NOISE_SD, size=n)
+    happiness = np.clip(happiness, 0.0, 10.0)
+
+    return pd.DataFrame({
+        "year": years,
+        "era": era,
+        "wealth": np.round(wealth, 1),
+        "happiness": np.round(happiness, 2),
+    })
+
+
+# ----------------------------------------------------------------------------
+# 2. MARGINAL-GAIN HELPERS
+# ----------------------------------------------------------------------------
+def bracket_edges(df: pd.DataFrame, n: int = 5) -> np.ndarray:
+    """Equal-WIDTH wealth brackets from min to the 98th pct (tail trimmed)."""
+    lo = df["wealth"].min() - 1e-6
+    hi = np.percentile(df["wealth"], 98)
+    return np.linspace(lo, hi, n + 1)
+
+
+def marginal_gain_by_bracket(df: pd.DataFrame, edges: np.ndarray) -> np.ndarray:
+    """Mean-happiness increase contributed by each successive wealth bracket."""
+    d = df.copy()
+    d["bin"] = pd.cut(d["wealth"], bins=edges, include_lowest=True, labels=False)
+    means = d.groupby("bin")["happiness"].mean().reindex(range(len(edges) - 1))
+    means = means.interpolate().bfill().ffill()
+    prev = np.concatenate([[FLOOR], means.values[:-1]])
+    return means.values - prev
+
+
+# ----------------------------------------------------------------------------
+# 3. VERIFICATION
+# ----------------------------------------------------------------------------
+def verify(df: pd.DataFrame) -> np.ndarray:
+    print("Sample rows")
+    print("-" * 52)
+    print(df.sample(10, random_state=1).sort_index().to_string(index=False))
+
+    edges = bracket_edges(df, n=5)
+    centers = (edges[:-1] + edges[1:]) / 2
+
+    agg = marginal_gain_by_bracket(df, edges)
+    g80 = marginal_gain_by_bracket(df[df.era == "1980s"], edges)
+    g10 = marginal_gain_by_bracket(df[df.era == "2010s"], edges)
+
+    print("\nMarginal happiness gain per wealth bracket")
+    print("-" * 52)
+    print(f"{'bracket':>8}{'center$k':>10}{'1980s':>9}{'2010s':>9}{'combined':>10}")
+    for i in range(len(agg)):
+        print(f"{i + 1:>8}{centers[i]:>10.0f}{g80[i]:>9.3f}{g10[i]:>9.3f}{agg[i]:>10.3f}")
+
+    above = centers > KINK
+    print("\nPhenomenon (a) aggregate diminishing returns:")
+    print(f"  gain bracket 1 = {agg[0]:.3f}  >>  gain bracket {len(agg)} = {agg[-1]:.3f}"
+          f"  ({'PASS' if agg[0] > agg[-1] else 'FAIL'})")
+
+    print("Eras start together below the kink:")
+    print(f"  bracket-1 gain  1980s {g80[0]:.3f} vs 2010s {g10[0]:.3f}"
+          f"  ({'PASS' if abs(g80[0] - g10[0]) < 0.25 else 'FAIL'})")
+
+    print("Phenomenon (b) 2010s flattens sooner/harder above the kink:")
+    print(f"  mean gain above ${KINK:.0f}k  1980s {g80[above].mean():.3f} "
+          f"vs 2010s {g10[above].mean():.3f}"
+          f"  ({'PASS' if g10[above].mean() < g80[above].mean() else 'FAIL'})")
+    return edges
+
+
+# ----------------------------------------------------------------------------
+# Shared styling
+# ----------------------------------------------------------------------------
+def apply_style() -> None:
+    plt.rcParams.update({
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "axes.edgecolor": "#d9d9d9",
+        "axes.linewidth": 1.0,
+        "axes.grid": True,
+        "grid.color": "#ececec",
+        "grid.linewidth": 0.9,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "font.family": "DejaVu Sans",
+        "font.size": 12,
+        "axes.titlesize": 17,
+        "axes.titleweight": "bold",
+        "axes.labelsize": 12.5,
+        "xtick.color": "#555555",
+        "ytick.color": "#555555",
+        "axes.labelcolor": "#333333",
+    })
+
+
+# ----------------------------------------------------------------------------
+# 4. CHART 1 - marginal-gain histogram (5 brackets, one color + accent)
+# ----------------------------------------------------------------------------
+def make_histogram(df: pd.DataFrame, edges: np.ndarray,
+                   path: str = "chart1_marginal_gain_hist.png") -> None:
+    gains = marginal_gain_by_bracket(df, edges)
+    n = len(gains)
+    x = np.arange(1, n + 1)
+
+    fig, ax = plt.subplots(figsize=(10, 6.2))
+    ax.bar(x, gains, color=SOFT_BLUE, edgecolor="white",
+           linewidth=1.4, width=0.80, zorder=3)
+
+    ax.set_title("Diminishing returns of wealth on happiness", loc="left", pad=14)
+
+    # X-axis: label "Wealth", ticks show each bracket's dollar range.
+    ax.set_xlabel("Wealth")
+    ax.set_ylabel("Marginal happiness gained  (0\u201310 scale)")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"${edges[i]:.0f}\u2013{edges[i + 1]:.0f}k" for i in range(n)])
+    ax.set_ylim(0, max(gains) * 1.18)
+    ax.set_axisbelow(True)
+
     fig.tight_layout()
-
-    if save_path:
-        fig.savefig(save_path, dpi=150)
-    return fig
+    fig.savefig(path, dpi=200, bbox_inches="tight")
+    print(f"\nsaved {path}")
 
 
-def happiness_histogram(wealth, happiness, edges=None, bins=10,
-                        labels=("low wealth", "middle wealth", "high wealth"),
-                        title="Happiness Distribution by Wealth Group",
-                        save_path=None):
-    """Overlaid histogram of happiness, split into wealth groups.
+# ----------------------------------------------------------------------------
+# 5. CHART 2 - era curves with a single kink line
+# ----------------------------------------------------------------------------
+def make_line_chart(df: pd.DataFrame,
+                    path: str = "chart2_era_curves.pdf") -> None:
+    q_edges = df["wealth"].quantile(np.linspace(0, 1, 26)).values
+    centers = (q_edges[:-1] + q_edges[1:]) / 2
 
-    People are bucketed by wealth (low / middle / high by default) and a
-    translucent happiness histogram is drawn for each group, so you can see
-    how the distribution shifts as wealth rises.
+    def smooth(y, w=3):
+        kern = np.ones(w) / w
+        return np.convolve(np.pad(y, (w // 2, w // 2), mode="edge"), kern, mode="valid")
 
-    Args:
-        wealth: List of wealth/income values.
-        happiness: List of happiness scores, same length as ``wealth``.
-        edges: Wealth cut points between groups. Defaults to the data's
-            tertiles, giving three roughly equal-sized groups.
-        bins: Number of histogram bins for the happiness axis.
-        labels: Names for the groups (one more than ``edges``).
-        title: Figure title.
-        save_path: If given, the figure is written to this path.
+    fig, ax = plt.subplots(figsize=(10, 6.4))
+    y_lo, y_hi = FLOOR - 0.3, 9.2
 
-    Returns:
-        The matplotlib ``Figure``.
-    """
-    if edges is None:
-        # Tertiles of wealth -> three roughly equal groups (plain Python).
-        s = sorted(wealth)
-        edges = [s[len(s) // 3], s[2 * len(s) // 3]]
+    for label, color in (("1980s", C_1980), ("2010s", C_2010)):
+        sub = df[df.era == label].copy()
+        sub["bin"] = pd.cut(sub["wealth"], bins=q_edges, include_lowest=True, labels=False)
+        means = sub.groupby("bin")["happiness"].mean().reindex(
+            range(len(centers))).interpolate().values
+        ax.plot(centers, smooth(means), color=color, linewidth=3.2,
+                solid_capstyle="round", label=label, zorder=3)
 
-    # Assign each person to a group index from their wealth.
-    groups = [[] for _ in labels]
-    for w, h in zip(wealth, happiness):
-        idx = sum(1 for e in edges if w >= e)  # 0..len(edges)
-        groups[idx].append(h)
+    # Single vertical line at the kink where the 2010s starts flattening faster.
+    ax.axvline(KINK, color=SOFT_RED, linewidth=2.0, linestyle=(0, (4, 3)), zorder=2)
+    ax.text(KINK + 4, y_hi - 0.15, f"Eras Diverge (~${KINK:.0f}k)",
+            color=SOFT_RED, fontsize=10.5, ha="left", va="top", fontweight="bold")
 
-    colors = ["#d64545", "#e0a13c", "#2e8b57"]
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for scores, label, color in zip(groups, labels, colors):
-        if scores:
-            ax.hist(scores, bins=bins, range=(0, 10), alpha=0.55,
-                    color=color, edgecolor="white",
-                    label=f"{label} (n={len(scores)})")
+    ax.set_title("Past ~$115k, extra wealth bought more happiness in the "
+                 "1980s than the 2010s", loc="left", pad=14, fontsize=13.5)
 
-    ax.set_xlabel("Happiness score")
-    ax.set_ylabel("Number of people")
-    ax.set_title(title)
-    ax.legend()
-    ax.grid(True, alpha=0.2)
+    ax.set_xlabel("Wealth  ($1,000s)")
+    ax.set_ylabel("Happiness  (0\u201310 scale)")
+    ax.set_xlim(0, np.percentile(df["wealth"], 99))
+    ax.set_ylim(y_lo, y_hi)
+
+    leg = ax.legend(title="Era", frameon=False, loc="lower right",
+                    fontsize=11.5, title_fontsize=12)
+    leg._legend_box.align = "left"
+
+    ax.set_axisbelow(True)
     fig.tight_layout()
-
-    if save_path:
-        fig.savefig(save_path, dpi=150)
-    return fig
+    fig.savefig(path, bbox_inches="tight")          # vector PDF
+    print(f"saved {path}")
 
 
-def diminishing_returns(wealth=None, model=None,
-                        title="Diminishing Returns of Wealth on Happiness",
-                        save_path=None):
-    """Line chart showing happiness rising steeply, then flattening.
+# ----------------------------------------------------------------------------
+def main() -> None:
+    df = generate_dataset()
+    df.to_csv("wealth_happiness.csv", index=False)
+    print(f"dataset: {len(df):,} rows, eras {list(ERAS)}  (kink at ${KINK:.0f}k)\n")
 
-    Illustrates diminishing returns: each extra dollar buys less happiness
-    than the last. By default it evaluates a saturating log-style model over
-    an even sweep of wealth values, so it runs out of the box with no data.
+    edges = verify(df)
 
-    Args:
-        wealth: Optional list of wealth values (x-axis). Defaults to an even
-            sweep from 0 to 120,000.
-        model: Optional ``f(wealth) -> happiness`` curve. Defaults to a
-            saturating curve that flattens toward a happiness of ~10.
-        title: Figure title.
-        save_path: If given, the figure is written to this path.
+    apply_style()
+    make_histogram(df, edges)
+    make_line_chart(df)
 
-    Returns:
-        The matplotlib ``Figure``.
-    """
-    if wealth is None:
-        # Even sweep of incomes from 0 to 120k.
-        wealth = [i * 120000 / 200 for i in range(201)]
-    if model is None:
-        # Saturating curve: fast early gains, flattening tail.
-        model = lambda w: 10 * (1 - math.exp(-w / 25000))
 
-    xs = sorted(wealth)
-    ys = [model(w) for w in xs]
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(xs, ys, color="#2e8b57", linewidth=2.5)
-    ax.fill_between(xs, ys, color="#2e8b57", alpha=0.08)
-
-    ax.set_xlabel("Wealth (annual income)")
-    ax.set_ylabel("Happiness score")
-    ax.set_title(title)
-    ax.grid(True, alpha=0.2)
-    fig.tight_layout()
-
-    if save_path:
-        fig.savefig(save_path, dpi=150)
-    return fig
+if __name__ == "__main__":
+    main()

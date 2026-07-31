@@ -4,11 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "happiness_wealth"
-version = "0.2.0"
-description = "Tiny matplotlib visualizations of the relationship between wealth and happiness."
+version = "0.3.0"
+description = "Wealth vs. happiness curves that kink into sharp diminishing returns."
 readme = "README.md"
 requires-python = ">=3.8"
-dependencies = ["matplotlib"]
+dependencies = ["matplotlib", "numpy", "pandas"]
+
+[project.scripts]
+happiness-wealth = "happiness_wealth.plots:main"
 
 [tool.setuptools]
 packages = ["happiness_wealth"]

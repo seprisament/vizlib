@@ -1,11 +1,17 @@
 # happiness_wealth
 
-> A tiny, locally-installable Python library for visualizing the relationship between wealth and happiness.
+> A tiny Python project that models how extra wealth buys less and less
+> happiness — and how that curve *kinked* between the 1980s and the 2010s.
 
-Three plain functions, one matplotlib dependency, no pandas/numpy. Plots a
-scatter of wealth vs. happiness with a hand-fitted trend line, a line chart
-showing the classic diminishing-returns curve, and a histogram of happiness
-split by wealth group.
+One self-contained script generates a synthetic, reproducible dataset and
+renders two charts:
+
+- **Chart 1 — marginal-gain histogram** (`chart1_marginal_gain_hist.png`):
+  the marginal happiness gained per equal-width wealth bracket, both eras
+  combined. The bars shrink left to right — classic diminishing returns.
+- **Chart 2 — era curves** (`chart2_era_curves.pdf`): happiness vs. wealth
+  for each era, sharing one curve until a *kink* (~$115k) where the 2010s
+  starts flattening much faster than the 1980s.
 
 ## Install
 
@@ -13,69 +19,69 @@ split by wealth group.
 pip install -e .
 ```
 
-**matplotlib is the only runtime dependency.**
+Runtime dependencies: **matplotlib, numpy, pandas**.
 
-## Generate the data
+## Run
 
-A standard-library-only script generates a realistic, reproducible dataset
-(positive-but-noisy correlation with a diminishing-returns shape) and writes
-it to `data/happiness_wealth.csv`:
+The package is self-contained — it generates its own data, so there's no
+separate data-generation step:
 
 ```bash
-python generate_data.py
+# via the installed console script
+happiness-wealth
+
+# or as a module
+python -m happiness_wealth.plots
 ```
 
-The amount of data (`N`) and the random `SEED` are constants at the top of
-`generate_data.py` — edit them, or call `generate(n=..., seed=...)` directly.
+Each run writes three files to the current directory:
 
-## End-to-end example
+| Output | What it is |
+| --- | --- |
+| `wealth_happiness.csv` | The generated dataset (`year, era, wealth, happiness`). |
+| `chart1_marginal_gain_hist.png` | Marginal-gain histogram (raster). |
+| `chart2_era_curves.pdf` | Era curves with the divergence line (vector). |
+
+A committed sample of the dataset lives at `data/wealth_happiness.csv`.
+
+## Use as a library
+
+The building blocks are importable so you can generate data or draw a single
+chart yourself:
 
 ```python
 import happiness_wealth as hw
 
-# 1. Load the generated CSV into plain lists (dict with "wealth"/"happiness").
-data = hw.load_csv("data/happiness_wealth.csv")
+df = hw.generate_dataset()          # pandas DataFrame: year, era, wealth, happiness
+edges = hw.bracket_edges(df, n=5)   # equal-width wealth brackets
 
-# 2. Scatter of wealth vs. happiness with a fitted trend line.
-fig1 = hw.scatter_trend(data["wealth"], data["happiness"],
-                        title="Wealth vs. Happiness",
-                        save_path="scatter.png")
-
-# 3. The diminishing-returns curve (runs with no data at all).
-fig2 = hw.diminishing_returns(save_path="diminishing.png")
-
-# 4. Histogram of happiness, split into low/middle/high wealth groups.
-fig3 = hw.happiness_histogram(data["wealth"], data["happiness"],
-                              save_path="histogram.png")
-
-# Show them interactively instead of / in addition to saving:
-import matplotlib.pyplot as plt
-plt.show()
+hw.apply_style()                    # shared matplotlib styling
+hw.make_histogram(df, edges, path="hist.png")
+hw.make_line_chart(df, path="curves.pdf")
 ```
 
 ## API
 
 | Function | Description |
 | --- | --- |
-| `load_csv(path="data/happiness_wealth.csv")` | Read the CSV into `{"wealth": [...], "happiness": [...]}`. |
-| `scatter_trend(wealth, happiness, title=..., save_path=None)` | Scatter plot with a plain least-squares trend line. |
-| `diminishing_returns(wealth=None, model=None, title=..., save_path=None)` | Line chart of happiness rising then flattening. |
-| `happiness_histogram(wealth, happiness, edges=None, bins=10, ...)` | Overlaid happiness histogram, split by wealth group (tertiles by default). |
-
-Every plotting function returns the matplotlib `Figure`, and writes a PNG
-when given `save_path`.
+| `generate_dataset()` | Build the synthetic era-split DataFrame (`year, era, wealth, happiness`). |
+| `happiness_curve(wealth, era)` | The piecewise wealth→happiness model (shared below the kink, era-specific above). |
+| `bracket_edges(df, n=5)` | Equal-width wealth-bracket edges (tail trimmed at the 98th pct). |
+| `marginal_gain_by_bracket(df, edges)` | Mean happiness gained by each successive wealth bracket. |
+| `apply_style()` | Apply the shared, minimal matplotlib style. |
+| `make_histogram(df, edges, path=...)` | Render the marginal-gain histogram (Chart 1). |
+| `make_line_chart(df, path=...)` | Render the era curves with the divergence line (Chart 2). |
+| `main()` | Generate the data, print a verification summary, and write all three outputs. |
 
 ## File tree
 
 ```
 .
 ├── happiness_wealth/
-│   ├── __init__.py      # exposes load_csv + the three plotting functions
-│   ├── loader.py        # load_csv
-│   └── plots.py         # the three visualization functions
+│   ├── __init__.py      # exposes the dataset + charting functions
+│   └── plots.py         # data model, charts, and CLI entry point
 ├── data/
-│   └── happiness_wealth.csv   # sample generated dataset
-├── generate_data.py     # standard-library data generator
+│   └── wealth_happiness.csv   # committed sample dataset
 ├── pyproject.toml
 └── README.md
 ```

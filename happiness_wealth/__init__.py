@@ -1,12 +1,28 @@
-"""happiness_wealth — tiny matplotlib visualizations of wealth vs. happiness."""
+"""happiness_wealth — wealth vs. happiness curves that kink into diminishing returns.
 
-from .loader import load_csv
-from .plots import scatter_trend, diminishing_returns, happiness_histogram
+Self-contained: :func:`main` generates a synthetic, era-split dataset and
+renders both charts. The building blocks are exposed for reuse.
+"""
 
-__version__ = "0.2.0"
+from .plots import (
+    generate_dataset,
+    happiness_curve,
+    bracket_edges,
+    marginal_gain_by_bracket,
+    apply_style,
+    make_histogram,
+    make_line_chart,
+    main,
+)
+
+__version__ = "0.3.0"
 __all__ = [
-    "load_csv",
-    "scatter_trend",
-    "diminishing_returns",
-    "happiness_histogram",
+    "generate_dataset",
+    "happiness_curve",
+    "bracket_edges",
+    "marginal_gain_by_bracket",
+    "apply_style",
+    "make_histogram",
+    "make_line_chart",
+    "main",
 ]
